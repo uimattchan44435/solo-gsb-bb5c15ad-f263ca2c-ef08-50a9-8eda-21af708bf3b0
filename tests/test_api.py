@@ -1429,6 +1429,44 @@ def test_window_coverage_contour_enclosing_window_counted(client):
     assert w["coverage"] == 1.0
 
 
+def test_window_coverage_far_from_origin_regression(client):
+    # 回归：10x10 外方位于 (1e9, 1e9)，其内部 6x6 窗口曾因大坐标
+    # 相消误判 covered_area=0；应为 36、覆盖率 1
+    pid = _mk(client, "M1000000000,1000000000 h10 v10 h-10 Z")
+    r = client.post(f"/paths/{pid}/window-coverage",
+                    json={"windows": [
+                        {"xmin": 1e9 + 2, "ymin": 1e9 + 2,
+                         "xmax": 1e9 + 8, "ymax": 1e9 + 8}]})
+    assert r.status_code == 200, r.text
+    w = r.json()["windows"][0]
+    assert w["window_area"] == 36.0
+    assert w["covered_area"] == 36.0
+    assert w["coverage"] == 1.0
+
+
+def test_window_coverage_translation_invariant(client):
+    # 同一形状与窗口整体平移到 1e9：覆盖面积与覆盖率逐窗不变
+    pid0 = _mk(client, "M0,0h10v10h-10Z M2,2h6v6h-6Z")
+    pid1 = _mk(client, "M1000000000,1000000000 h10 v10 h-10 Z "
+                       "M1000000002,1000000002 h6 v6 h-6 Z")
+    o = 1e9
+    w0 = client.post(f"/paths/{pid0}/window-coverage",
+                     json={"windows": [
+                         {"xmin": 0, "ymin": 0, "xmax": 10, "ymax": 10},
+                         {"xmin": 5, "ymin": 5, "xmax": 15, "ymax": 15}
+                     ]}).json()["windows"]
+    w1 = client.post(f"/paths/{pid1}/window-coverage",
+                     json={"windows": [
+                         {"xmin": o, "ymin": o,
+                          "xmax": o + 10, "ymax": o + 10},
+                         {"xmin": o + 5, "ymin": o + 5,
+                          "xmax": o + 15, "ymax": o + 15}
+                     ]}).json()["windows"]
+    assert [(w["covered_area"], w["coverage"]) for w in w0] == \
+           [(w["covered_area"], w["coverage"]) for w in w1] == \
+           [(64.0, 0.64), (16.0, 0.16)]
+
+
 def test_window_coverage_island_readded(client):
     # 外 100 - 孔 64 + 岛 4 = 40
     pid = _mk(client, "M0,0h10v10h-10Z M1,1h8v8h-8Z M6,6h2v2h-2Z")

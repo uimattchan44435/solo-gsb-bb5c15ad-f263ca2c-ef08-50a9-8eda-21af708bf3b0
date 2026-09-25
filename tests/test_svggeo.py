@@ -68,6 +68,21 @@ def test_signed_area_screen_coords():
     assert math.isclose(signed_area(pts), 100.0, abs_tol=1e-9)
 
 
+def test_signed_area_local_reference_translation_invariant():
+    # 局部参考点稳定求和：远离原点的小环面积不被 x1*y2-x2*y1
+    # 大数相消吞没（1e9 处单个乘积的浮点步长已达 128），
+    # 同一环整体平移后面积完全一致
+    base = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    assert signed_area(base) == 100.0
+    for off in (1e6, 1e9):
+        moved = [(x + off, y + off) for x, y in base]
+        assert signed_area(moved) == 100.0
+    # 1x1 小环在 1e9 处：面积 1 不被误判为 0，符号约定不变
+    tiny_cw = [(1e9, 1e9), (1e9 + 1, 1e9), (1e9 + 1, 1e9 + 1), (1e9, 1e9 + 1)]
+    assert signed_area(tiny_cw) == 1.0
+    assert signed_area(list(reversed(tiny_cw))) == -1.0
+
+
 def test_outer_and_hole_classification():
     # 外环顺时针 + 内部孔洞顺时针（需要被反转为逆时针）
     d = "M0,0h40v40h-40Z M10,10h20v20h-20Z"

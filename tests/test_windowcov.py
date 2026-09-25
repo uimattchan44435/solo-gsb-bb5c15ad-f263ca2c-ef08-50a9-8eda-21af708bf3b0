@@ -204,3 +204,70 @@ def test_no_negative_zero_in_output():
     d = "M-1,0 A1,1 0 1,0 1,0 A1,1 0 1,0 -1,0 Z"
     r = _coverage(d, [(-2.0, -2.0, 2.0, 2.0), (5.0, 5.0, 9.0, 9.0)])
     assert "-0.0" not in repr(r)
+
+
+def test_far_from_origin_window_inside_square_full_coverage():
+    # 回归：10x10 外方整体位于 (1e9, 1e9)，其内部 6x6 窗口曾因
+    # 鞋带公式在大坐标下相消（单个乘积的浮点步长已超过小环面积）
+    # 误判 covered_area=0；局部参考点稳定求和后应为 36、覆盖率 1
+    d = "M1000000000,1000000000 h10 v10 h-10 Z"
+    r = _coverage(d, [(1e9 + 2, 1e9 + 2, 1e9 + 8, 1e9 + 8)])
+    w = r["windows"][0]
+    assert w["window_area"] == 36.0
+    assert w["covered_area"] == 36.0
+    assert w["coverage"] == 1.0
+    assert r["contributing_contour_count"] == 1
+
+
+def test_far_from_origin_tiny_ring_not_misjudged_degenerate():
+    # 1x1 小环在 1e9 处面积仅 1：环面积判定不被大坐标相消吞没，
+    # 不误判为退化轮廓而跳过
+    d = "M1000000000,1000000000 h1 v1 h-1 Z"
+    r = _coverage(d, [(1e9 - 1, 1e9 - 1, 1e9 + 2, 1e9 + 2)])
+    w = r["windows"][0]
+    assert w["window_area"] == 9.0
+    assert w["covered_area"] == 1.0
+    assert w["coverage"] == 0.111111111
+    assert r["contributing_contour_count"] == 1
+    assert r["skipped_contours"] == []
+
+
+def test_far_from_origin_outer_hole_island_alternation():
+    # 远离原点时外/孔/岛的交替贡献保持正确：100 - 64 + 4 = 40
+    o = 1000000000
+    d = (f"M{o},{o} h10 v10 h-10 Z "
+         f"M{o + 1},{o + 1} h8 v8 h-8 Z "
+         f"M{o + 6},{o + 6} h2 v2 h-2 Z")
+    r = _coverage(d, [(o, o, o + 10, o + 10)])
+    assert r["windows"][0]["covered_area"] == 40.0
+    assert r["contributing_contour_count"] == 3
+
+
+def test_far_from_origin_multiple_windows_input_order():
+    # 大坐标下多窗口仍按输入顺序逐窗返回
+    o = 1000000000
+    d = f"M{o},{o} h10 v10 h-10 Z"
+    r = _coverage(d, [(o + 2, o + 2, o + 8, o + 8),
+                      (o + 20, o + 20, o + 30, o + 30),
+                      (o, o, o + 10, o + 10)])
+    assert [w["index"] for w in r["windows"]] == [0, 1, 2]
+    assert r["windows"][0]["covered_area"] == 36.0
+    assert r["windows"][1]["covered_area"] == 0.0
+    assert r["windows"][2]["covered_area"] == 100.0
+
+
+def test_translation_invariance_same_shape_and_window():
+    # 同一形状与窗口整体平移（含远离原点 1e6 / 1e9）：
+    # 覆盖面积与覆盖率逐窗完全一致，且与原点处已知结果相同
+    snapshots = []
+    for off in (0.0, 1e6, 1e9):
+        d = (f"M{off},{off} h10 v10 h-10 Z "
+             f"M{off + 2},{off + 2} h6 v6 h-6 Z")
+        r = _coverage(d, [(off, off, off + 10, off + 10),
+                          (off + 5, off + 5, off + 15, off + 15),
+                          (off + 20, off + 20, off + 30, off + 30)])
+        snapshots.append([(w["covered_area"], w["coverage"])
+                          for w in r["windows"]])
+    # 全窗 100-36=64；5..15 窗口外环裁剪 25、孔裁剪 9 -> 16；窗外 0
+    assert snapshots[0] == [(64.0, 0.64), (16.0, 0.16), (0.0, 0.0)]
+    assert snapshots[0] == snapshots[1] == snapshots[2]
