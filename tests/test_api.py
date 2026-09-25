@@ -1479,6 +1479,45 @@ def test_window_coverage_is_readonly_and_needs_no_prior_normalization(client):
     assert b1 == b2
 
 
+def test_window_coverage_far_from_origin(client):
+    # 回归：10x10 方形位于 (1e9,1e9)，查询其内部 6x6 窗口。
+    # 大坐标直接鞋带求和曾把裁剪面积算成 0；局部参考点求和后为 36 / 1
+    pid = _mk(client, "M1000000000,1000000000h10v10h-10Z")
+    r = client.post(f"/paths/{pid}/window-coverage",
+                    json={"windows": [
+                        {"xmin": 1e9 + 2, "ymin": 1e9 + 2,
+                         "xmax": 1e9 + 8, "ymax": 1e9 + 8}]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["contributing_contour_count"] == 1
+    w = body["windows"][0]
+    assert w["window_area"] == 36.0
+    assert w["covered_area"] == 36.0
+    assert w["coverage"] == 1.0
+
+
+def test_window_coverage_translation_invariant(client):
+    # 平移同一形状及窗口不改变覆盖面积与覆盖率
+    d0 = "M0,0h10v10h-10Z M2,2h6v6h-6Z"
+    d1 = ("M1000000000,1000000000h10v10h-10Z "
+          "M1000000002,1000000002h6v6h-6Z")
+    pid0, pid1 = _mk(client, d0), _mk(client, d1)
+    wins0 = [{"xmin": 0, "ymin": 0, "xmax": 10, "ymax": 10},
+             {"xmin": 5, "ymin": 5, "xmax": 15, "ymax": 15}]
+    wins1 = [{"xmin": 1e9 + w["xmin"], "ymin": 1e9 + w["ymin"],
+              "xmax": 1e9 + w["xmax"], "ymax": 1e9 + w["ymax"]}
+             for w in wins0]
+    b0 = client.post(f"/paths/{pid0}/window-coverage",
+                     json={"windows": wins0}).json()
+    b1 = client.post(f"/paths/{pid1}/window-coverage",
+                     json={"windows": wins1}).json()
+    assert [w["covered_area"] for w in b0["windows"]] == \
+           [w["covered_area"] for w in b1["windows"]]
+    assert [w["coverage"] for w in b0["windows"]] == \
+           [w["coverage"] for w in b1["windows"]]
+    assert [w["covered_area"] for w in b1["windows"]] == [64.0, 16.0]
+
+
 def test_window_coverage_404(client):
     r = client.post("/paths/999999/window-coverage",
                     json={"windows": [

@@ -204,3 +204,49 @@ def test_no_negative_zero_in_output():
     d = "M-1,0 A1,1 0 1,0 1,0 A1,1 0 1,0 -1,0 Z"
     r = _coverage(d, [(-2.0, -2.0, 2.0, 2.0), (5.0, 5.0, 9.0, 9.0)])
     assert "-0.0" not in repr(r)
+
+
+def test_far_from_origin_window_inside_contour():
+    # 回归：10x10 方形位于 (1e9,1e9)，查询其内部 6x6 窗口。
+    # 大坐标直接鞋带求和会让 ~1e18 的乘积淹没小面积差分，
+    # 曾误判 covered_area=0；局部参考点求和后应为 36 / 1
+    d = "M1000000000,1000000000h10v10h-10Z"
+    r = _coverage(d, [(1e9 + 2, 1e9 + 2, 1e9 + 8, 1e9 + 8)])
+    w = r["windows"][0]
+    assert r["contributing_contour_count"] == 1
+    assert w["window_area"] == 36.0
+    assert w["covered_area"] == 36.0
+    assert w["coverage"] == 1.0
+
+
+def test_far_from_origin_outer_hole_island_alternation():
+    # 远离原点时外环/孔洞/岛的交替贡献不变：100 - 64 + 4 = 40
+    d = ("M1000000000,1000000000h10v10h-10Z "
+         "M1000000001,1000000001h8v8h-8Z "
+         "M1000000006,1000000006h2v2h-2Z")
+    r = _coverage(d, [(1e9, 1e9, 1e9 + 10, 1e9 + 10)])
+    w = r["windows"][0]
+    assert r["contributing_contour_count"] == 3
+    assert w["covered_area"] == 40.0
+    assert w["coverage"] == 0.4
+
+
+def test_translation_invariance():
+    # 平移同一形状及窗口不改变覆盖面积/覆盖率，且窗口按输入顺序回显
+    d0 = "M0,0h10v10h-10Z M2,2h6v6h-6Z"
+    d1 = ("M1000000000,1000000000h10v10h-10Z "
+          "M1000000002,1000000002h6v6h-6Z")
+    w0 = [(0.0, 0.0, 10.0, 10.0),
+          (5.0, 5.0, 15.0, 15.0),
+          (2.0, 2.0, 8.0, 8.0)]
+    w1 = [(1e9 + x, 1e9 + y, 1e9 + x2, 1e9 + y2)
+          for (x, y, x2, y2) in w0]
+    r0 = _coverage(d0, w0)
+    r1 = _coverage(d1, w1)
+    assert [w["index"] for w in r1["windows"]] == [0, 1, 2]
+    assert [w["covered_area"] for w in r0["windows"]] == \
+           [w["covered_area"] for w in r1["windows"]]
+    assert [w["coverage"] for w in r0["windows"]] == \
+           [w["coverage"] for w in r1["windows"]]
+    # 平移后的具体取值：整窗 64、半窗 16、孔窗 0
+    assert [w["covered_area"] for w in r1["windows"]] == [64.0, 16.0, 0.0]
